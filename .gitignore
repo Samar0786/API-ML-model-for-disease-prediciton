@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Virtual environment
+venv/
+.env/
+
+# VS Code
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Large data files (optional - remove if you want to push dataset)
+data/
+
+# Ignore training artifacts (optional)
+*.ipynb_checkpoints
+
+# Keep models (do NOT ignore if you want deployment)
+# If models get too large later, consider ignoring them
+# models/
+
+# Temporary files
+*.tmp
