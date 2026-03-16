@@ -5,11 +5,17 @@ import joblib
 import shap
 import matplotlib.pyplot as plt
 
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    confusion_matrix,
+    roc_auc_score,
+)
 from xgboost import XGBClassifier
 
 
@@ -17,12 +23,11 @@ from xgboost import XGBClassifier
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_PATH = os.path.join(BASE_DIR, "data", "heart.csv")
+DATA_PATH = os.path.join(BASE_DIR, "data", "heart_standard.csv")
 MODELS_DIR = os.path.join(BASE_DIR, "models", "heart")
 
 # Ensure models directory exists
 os.makedirs(MODELS_DIR, exist_ok=True)
-
 
 
 #  Load & Clean Dataset
@@ -56,26 +61,23 @@ categorical_features = [c for c in categorical_features if c in X.columns]
 
 #  Preprocessing Pipeline
 
-
-numeric_transformer = Pipeline(steps=[
-    ("scaler", StandardScaler())
-])
+numeric_transformer = Pipeline(steps=[("scaler", StandardScaler())])
 
 preprocess = ColumnTransformer(
     transformers=[
         ("num", numeric_transformer, numeric_features),
-        ("cat", "passthrough", categorical_features)
+        ("cat", "passthrough", categorical_features),
     ]
 )
 
-
-
 #  Model Definition (Tuned XGBoost)
 
-xgb_model = XGBClassifier(
-    n_estimators=500,
-    max_depth=4,
-    learning_rate=0.03,
+from sklearn.calibration import CalibratedClassifierCV
+
+base_xgb = XGBClassifier(
+    n_estimators=200,
+    max_depth=3,
+    learning_rate=0.05,
     subsample=0.8,
     colsample_bytree=0.8,
     objective="binary:logistic",
@@ -84,9 +86,15 @@ xgb_model = XGBClassifier(
     n_jobs=-1
 )
 
-model = Pipeline(steps=[
+calibrated_model = CalibratedClassifierCV(
+    base_xgb,
+    method="sigmoid",
+    cv=5
+)
+
+model = Pipeline([
     ("preprocess", preprocess),
-    ("clf", xgb_model)
+    ("clf", calibrated_model)
 ])
 
 
@@ -94,27 +102,23 @@ model = Pipeline(steps=[
 
 
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y,
-    test_size=0.2,
-    stratify=y,
-    random_state=42
+    X, y, test_size=0.2, stratify=y, random_state=42
 )
 
-
 #  Cross Validation
-
 
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
 cv_scores = cross_val_score(model, X_train, y_train, cv=cv, scoring="roc_auc")
 
-print("\nCross-Validation ROC-AUC: {:.4f} ± {:.4f}".format(
-    cv_scores.mean(), cv_scores.std()
-))
+print(
+    "\nCross-Validation ROC-AUC: {:.4f} ± {:.4f}".format(
+        cv_scores.mean(), cv_scores.std()
+    )
+)
 
 
 #  Train Final Model
-
 
 model.fit(X_train, y_train)
 
@@ -130,23 +134,44 @@ print("\nClassification Report:\n", classification_report(y_test, y_pred))
 
 #  SHAP Explainability
 
+# Extract calibrated classifier
+calibrated_clf = model.named_steps["clf"]
 
-trained_xgb = model.named_steps["clf"]
-X_processed = model.named_steps["preprocess"].transform(X)
+# Extract trained XGB model from calibration wrapper
+trained_xgb = calibrated_clf.calibrated_classifiers_[0].estimator
 
+# Get preprocessor
+preprocessor = model.named_steps["preprocess"]
+
+# Transform training data (NOT full X)
+X_train_processed = preprocessor.transform(X_train)
+
+# Get feature names after preprocessing
+feature_names = preprocessor.get_feature_names_out()
+
+# Create SHAP explainer
 explainer = shap.TreeExplainer(trained_xgb)
-shap_values = explainer.shap_values(X_processed)
 
-shap_plot_path = os.path.join(MODELS_DIR, "shap_feature_importance.png")
+shap_values = explainer.shap_values(X_train_processed)
 
+# Create output directory
+shap_path = os.path.join(BASE_DIR, "models", "heart")
+os.makedirs(shap_path, exist_ok=True)
+
+# Save SHAP summary plot (IMPORTANT: use processed data + feature names)
 plt.figure()
-shap.summary_plot(shap_values, X, plot_type="bar", show=False)
+shap.summary_plot(
+    shap_values,
+    X_train_processed,
+    feature_names=feature_names,
+    plot_type="bar",
+    show=False
+)
 plt.tight_layout()
-plt.savefig(shap_plot_path)
+plt.savefig(os.path.join(shap_path, "shap_feature_importance.png"))
 plt.close()
 
-print("\nSHAP feature importance plot saved successfully!")
-
+print("\nSHAP feature importance plot saved.")
 
 # Save Model
 
@@ -157,12 +182,19 @@ joblib.dump(model, model_path)
 print("Model saved successfully!")
 
 
-
 #  Feature Importance Table
 
-
+# Get feature names after preprocessing
 feature_names = model.named_steps["preprocess"].get_feature_names_out()
-importances = model.named_steps["clf"].feature_importances_
+
+# Extract calibrated classifier
+calibrated_clf = model.named_steps["clf"]
+
+# Extract underlying trained XGB model
+trained_xgb = calibrated_clf.calibrated_classifiers_[0].estimator
+
+# Get feature importances
+importances = trained_xgb.feature_importances_
 
 importance_df = pd.DataFrame({
     "Feature": feature_names,
@@ -177,9 +209,7 @@ importance_df.to_csv(fi_path, index=False)
 
 print("Feature importance table saved successfully!")
 
-
 #  Threshold Tuning
-
 
 threshold = 0.40
 y_custom_pred = (y_proba >= threshold).astype(int)
