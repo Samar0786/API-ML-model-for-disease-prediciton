@@ -1,9 +1,9 @@
 Feature,Importance
-Glucose,0.4044431
-Glucose_BMI,0.14452228
-Gender,0.09797784
-Age_BMI,0.07479356
-Age,0.07429795
-BMI,0.07262392
-BloodPressure,0.06749114
-BP_BMI,0.06385021
+hba1c_level,0.4639809
+blood_glucose_level,0.29823175
+age,0.07771446
+hypertension,0.06106603
+heart_disease,0.042078815
+bmi,0.026958669
+gender,0.017106166
+smoking_history,0.012863152

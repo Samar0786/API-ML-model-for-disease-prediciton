@@ -4,27 +4,30 @@ import joblib
 import numpy as np
 import shap
 import matplotlib.pyplot as plt
+
 from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import (
-    accuracy_score,
-    classification_report,
-    confusion_matrix,
-    roc_auc_score,
-)
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, roc_auc_score
+
 from xgboost import XGBClassifier
 
 
+# ===============================
 # Paths
+# ===============================
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_PATH = os.path.join(BASE_DIR, "data", "diabetes.csv")
+DATA_PATH = os.path.join(BASE_DIR, "data", "diabetes_prediction_dataset.csv")
 MODEL_DIR = os.path.join(BASE_DIR, "models", "diabetes")
 
 os.makedirs(MODEL_DIR, exist_ok=True)
 
 
+# ===============================
 # Load Dataset
+# ===============================
+
 data = pd.read_csv(DATA_PATH)
 
 print("Original Shape:", data.shape)
@@ -37,63 +40,88 @@ print("Shape After Removing Duplicates:", data.shape)
 print("\nColumns:", data.columns)
 
 
-# Remove dataset source column (data leakage)
-if "Source" in data.columns:
-    data = data.drop("Source", axis=1)
+# ===============================
+# Rename Columns (important)
+# ===============================
+
+data.columns = data.columns.str.lower()
 
 
-# Encode gender
-data["Gender"] = data["Gender"].map({"Male": 1, "Female": 0}).fillna(0)
+# ===============================
+# Encode categorical columns
+# ===============================
+
+# gender: Female=0, Male=1
+data["gender"] = data["gender"].map({"Female": 0, "Male": 1})
+
+# smoking_history → label encoding
+data["smoking_history"] = pd.factorize(data["smoking_history"])[0]
 
 
-# ADD NEW INTERACTION FEATURES HERE
-
-data["Glucose_BMI"] = data["Glucose"] * data["BMI"]
-data["Age_BMI"] = data["Age"] * data["BMI"]
-data["BP_BMI"] = data["BloodPressure"] * data["BMI"]
-
+# ===============================
 # Features & Target
-X = data.drop("Diabetes", axis=1)
-y = data["Diabetes"]
+# ===============================
+
+X = data.drop("diabetes", axis=1)
+y = data["diabetes"]
 
 
 print("\nClass Distribution:")
 print(y.value_counts())
-print(data["Diabetes"].value_counts())
-
-# Model pipeline
-model = Pipeline(
-    [
-        ("scaler", StandardScaler()),
-        (
-            "clf",
-            XGBClassifier(
-                n_estimators=600,
-                max_depth=4,
-                learning_rate=0.025,
-                subsample=0.9,
-                colsample_bytree=0.9,
-                gamma=0.15,
-                min_child_weight=3,
-                reg_alpha=0.1,
-                reg_lambda=1.2,
-                objective="binary:logistic",
-                eval_metric="logloss",
-                scale_pos_weight=4.48,
-                random_state=42,
-            ),
-        ),
-    ]
-)
 
 
+# ===============================
+# Compute class imbalance weight
+# ===============================
+
+neg = (y == 0).sum()
+pos = (y == 1).sum()
+
+scale_pos_weight = neg / pos
+
+print("\nscale_pos_weight:", scale_pos_weight)
+
+
+# ===============================
 # Train Test Split
+# ===============================
+
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, stratify=y, random_state=42
+    X, y,
+    test_size=0.2,
+    stratify=y,
+    random_state=42
 )
 
 
+# ===============================
+# Model
+# ===============================
+
+model = Pipeline([
+    ("scaler", StandardScaler()),
+    ("clf", XGBClassifier(
+        n_estimators=600,
+        max_depth=5,
+        learning_rate=0.03,
+        subsample=0.9,
+        colsample_bytree=0.9,
+        gamma=0.2,
+        min_child_weight=3,
+        reg_alpha=0.1,
+        reg_lambda=1.2,
+        objective="binary:logistic",
+        eval_metric="logloss",
+        scale_pos_weight=scale_pos_weight,
+        random_state=42
+    ))
+])
+
+
+# ===============================
 # Cross Validation
+# ===============================
+
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
 scores = cross_val_score(model, X_train, y_train, cv=cv, scoring="roc_auc")
@@ -101,13 +129,22 @@ scores = cross_val_score(model, X_train, y_train, cv=cv, scoring="roc_auc")
 print("\nCross Validation ROC-AUC:", scores.mean())
 
 
+# ===============================
 # Train Model
+# ===============================
+
 model.fit(X_train, y_train)
 
 
+# ===============================
 # Predictions
-y_pred = model.predict(X_test)
+# ===============================
+
 y_proba = model.predict_proba(X_test)[:, 1]
+
+# threshold tuning
+threshold = 0.55
+y_pred = (y_proba >= threshold).astype(int)
 
 
 print("\n===== Test Results =====")
@@ -126,53 +163,44 @@ print("\nClassification Report:\n", classification_report(y_test, y_pred))
 
 print("\nGenerating SHAP explainability...")
 
-# Extract trained XGBoost model from pipeline
 xgb_model = model.named_steps["clf"]
 
-# Transform features using scaler
 X_scaled = model.named_steps["scaler"].transform(X)
 
-# Create SHAP explainer
 explainer = shap.TreeExplainer(xgb_model)
-
-# Calculate SHAP values
 shap_values = explainer.shap_values(X_scaled)
 
-# Feature names
-feature_names = X.columns
-
-# Create SHAP summary plot
 plt.figure()
 shap.summary_plot(shap_values, X, plot_type="bar", show=False)
 
 shap_path = os.path.join(MODEL_DIR, "shap_feature_importance.png")
-
 plt.savefig(shap_path)
 plt.close()
 
 print("SHAP plot saved at:", shap_path)
 
+
 # ===============================
-# Feature Importance Ranking
+# Feature Importance
 # ===============================
 
 importances = xgb_model.feature_importances_
 
 importance_df = pd.DataFrame({
-    "Feature": feature_names,
+    "Feature": X.columns,
     "Importance": importances
 }).sort_values(by="Importance", ascending=False)
 
-print("\n===== Feature Importance Ranking =====")
+print("\n===== Feature Importance =====")
 print(importance_df)
 
-csv_path = os.path.join(MODEL_DIR, "feature_importance.csv")
+importance_df.to_csv(os.path.join(MODEL_DIR, "feature_importance.csv"), index=False)
 
-importance_df.to_csv(csv_path, index=False)
 
-print("Feature importance saved at:", csv_path)
-
+# ===============================
 # Save Model
+# ===============================
+
 model_path = os.path.join(MODEL_DIR, "final_diabetes_model.pkl")
 
 joblib.dump(model, model_path)
