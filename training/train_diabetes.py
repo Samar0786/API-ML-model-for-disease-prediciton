@@ -83,7 +83,7 @@ print("\nscale_pos_weight:", scale_pos_weight)
 
 
 # ===============================
-# Train Test Split
+# Train Test Splitmmi
 # ===============================
 
 X_train, X_test, y_train, y_test = train_test_split(

@@ -1,33 +1,51 @@
 import pandas as pd
-from app.core.model_loader import load_model
+from app.core.model_loader import load_model_by_name
 
+# ===============================
+# EXPECTED FEATURES
+# ===============================
 EXPECTED_COLUMNS = [
     "age", "sex", "cp", "trestbps", "chol", "fbs",
     "restecg", "thalach", "exang", "oldpeak",
     "slope", "ca", "thal"
 ]
 
+# ===============================
+# RISK FUNCTION (CONSISTENT)
+# ===============================
+def risk_category(prob):
+    if prob < 0.4:
+        return "LOW RISK"
+    elif prob < 0.7:
+        return "MEDIUM RISK"
+    else:
+        return "HIGH RISK"
+
+# ===============================
+# PREDICTION FUNCTION
+# ===============================
 def predict_heart(data: dict):
 
-    model = load_model("heart")
+    # Load model (correct loader)
+    model = load_model_by_name("heart")
 
-    # Create dataframe with fixed column order
-    df = pd.DataFrame([[data[col] for col in EXPECTED_COLUMNS]],
-                      columns=EXPECTED_COLUMNS)
+    #  Check missing fields (INSIDE function)
+    missing = [col for col in EXPECTED_COLUMNS if col not in data]
+    if missing:
+        raise ValueError(f"Missing fields: {missing}")
 
+    # Ensure correct column order
+    df = pd.DataFrame(
+        [[data[col] for col in EXPECTED_COLUMNS]],
+        columns=EXPECTED_COLUMNS
+    )
+
+    #  Prediction
     pred = model.predict(df)[0]
     proba = model.predict_proba(df)[0][1]
-
-    # Risk thresholds
-    if proba >= 0.7:
-        risk = "High"
-    elif proba >= 0.4:
-        risk = "Moderate"
-    else:
-        risk = "Low"
 
     return {
         "prediction": int(pred),
         "probability": float(proba),
-        "risk_level": risk
+        "risk_level": risk_category(proba)
     }
