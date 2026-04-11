@@ -1,6 +1,5 @@
 import os
 import joblib
-from fastapi import HTTPException
 
 # ===============================
 # BASE DIRECTORY
@@ -15,50 +14,56 @@ BASE_DIR = os.path.dirname(
 # MODEL REGISTRY
 # ===============================
 MODEL_FILES = {
-    "heart": "final_heart_model.pkl",
-    "diabetes": "final_diabetes_model.pkl",
-    "liver": "liver_pipeline.pkl",
-    # "kidney": "kidney_pipeline.pkl"  # add later
+    "heart": "models/heart/final_heart_model.pkl",
+    "diabetes": "models/diabetes/final_diabetes_model.pkl",
+    "liver": "models/liver/liver_pipeline.pkl",
+    # "kidney": "models/kidney/kidney_pipeline.pkl"
 }
 
 # ===============================
-# CACHE (IMPORTANT FOR PERFORMANCE)
+# CACHE (IMPORTANT)
 # ===============================
 models_cache = {}
 
+
 # ===============================
-# LOAD MODEL BY DISEASE (API USE)
+# PRELOAD ALL MODELS (BEST PRACTICE)
 # ===============================
-def load_model_by_name(disease: str):
-    disease = disease.lower()
+def load_all_models():
+    print("🚀 Loading ML models...")
 
-    if disease in models_cache:
-        return models_cache[disease]
+    for name, relative_path in MODEL_FILES.items():
+        full_path = os.path.join(BASE_DIR, relative_path)
 
-    if disease not in MODEL_FILES:
-        raise HTTPException(status_code=404, detail=f"{disease} model not supported")
+        if not os.path.exists(full_path):
+            print(f"⚠️ Model missing: {full_path}")
+            continue
 
-    model_path = os.path.join(
-        BASE_DIR,
-        "models",
-        disease,
-        MODEL_FILES[disease]
-    )
+        try:
+            models_cache[name] = joblib.load(full_path)
+            print(f"✅ Loaded: {name}")
+        except Exception as e:
+            print(f"❌ Failed loading {name}: {e}")
 
-    if not os.path.exists(model_path):
-        raise HTTPException(
-            status_code=500,
-            detail=f"{disease} model not found at {model_path}"
-        )
+    print("🎯 Model loading complete")
 
-    model = joblib.load(model_path)
-    models_cache[disease] = model
+
+# ===============================
+# GET MODEL (FAST ACCESS)
+# ===============================
+def get_model(name: str):
+    name = name.lower()
+
+    model = models_cache.get(name)
+
+    if model is None:
+        raise ValueError(f"Model '{name}' not loaded")
 
     return model
 
 
 # ===============================
-# LOAD MODEL BY PATH (OPTIONAL USE)
+# OPTIONAL (DIRECT LOAD)
 # ===============================
 def load_model_by_path(relative_path: str):
     path = os.path.join(BASE_DIR, relative_path)

@@ -1,8 +1,6 @@
 import pandas as pd
-from app.core.model_loader import load_model_by_name
+from app.core.model_loader import get_model
 from app.core.logger import logger
-
-model = load_model_by_name("liver")
 
 EXPECTED_COLUMNS = [
     "age_of_the_patient",
@@ -17,6 +15,7 @@ EXPECTED_COLUMNS = [
     "a/g_ratio_albumin_and_globulin_ratio",
 ]
 
+
 def risk_category(prob):
     if prob < 0.35:
         return "LOW RISK"
@@ -25,11 +24,24 @@ def risk_category(prob):
     else:
         return "HIGH RISK"
 
+
 def predict_liver(data: dict):
     try:
         logger.info("Liver prediction request")
 
-        df = pd.DataFrame([[data[col] for col in EXPECTED_COLUMNS]],
+        model = get_model("liver")
+
+        # Fix key mismatch
+        if "a_g_ratio_albumin_and_globulin_ratio" in data:
+            data["a/g_ratio_albumin_and_globulin_ratio"] = data.pop(
+                "a_g_ratio_albumin_and_globulin_ratio"
+            )
+
+        missing = [c for c in EXPECTED_COLUMNS if c not in data]
+        if missing:
+            raise ValueError(f"Missing fields: {missing}")
+
+        df = pd.DataFrame([[data[c] for c in EXPECTED_COLUMNS]],
                           columns=EXPECTED_COLUMNS)
 
         prob = model.predict_proba(df)[0][1]
@@ -41,5 +53,5 @@ def predict_liver(data: dict):
         }
 
     except Exception as e:
-        logger.error(f"Liver prediction error: {e}")
+        logger.error(f"Liver error: {e}")
         raise
